@@ -73,35 +73,35 @@ async def show_profile(message: Message):
         
         # Формируем сообщение профиля
         profile_text = (
-            "👤 **Твой профиль**\n"
+            "👤 <b>Твой профиль</b>\n"
             "━━━━━━━━━━━━━━━\n\n"
-            f"📊 **Основные параметры:**\n"
+            f"📊 <b>Основные параметры:</b>\n"
             f"├ Рост: {user.height} см\n"
             f"├ Текущий вес: {user.current_weight} кг\n"
             f"├ Целевой вес: {user.target_weight} кг\n"
             f"└ Прогресс: ▓{'▓' * int(progress_percent/10)}{'░' * (10-int(progress_percent/10))} {progress_percent:.1f}%\n\n"
-            f"🎯 **План питания:**\n"
+            f"🎯 <b>План питания:</b>\n"
             f"├ Калории: {user.daily_calories} ккал\n"
             f"├ Белки: {user.daily_protein}г\n"
             f"├ Жиры: {user.daily_fats}г\n"
             f"└ Углеводы: {user.daily_carbs}г\n\n"
-            f"💧 **Рекомендации на день:**\n"
+            f"💧 <b>Рекомендации на день:</b>\n"
             f"├ Вода: {water_intake/1000:.1f}л\n"
             f"├ Шаги: 8000-10000\n"
             f"└ Сон: 7-9 часов\n\n"
-            f"{goal_emoji[user.goal]} **Цель на неделю:** "
+            f"{goal_emoji[user.goal]} <b>Цель на неделю:</b> "
             f"{'−' if user.goal == Goal.LOSE_WEIGHT else '+'}"
             f"{abs(weekly_progress):.2f} кг\n\n"
-            f"💳 **Статус:** {subscription_status}\n\n"
+            f"💳 <b>Статус:</b> {subscription_status}\n\n"
             "━━━━━━━━━━━━━━━\n"
-            "📱 **Доступные команды:**\n"
+            "📱 <b>Доступные команды:</b>\n"
             "• /meal_plan - План питания\n"
             "• /checkin - Ежедневный чек-ин\n"
             "• /stats - Статистика прогресса\n"
             "• /settings - Настройки профиля"
         )
         
-        await message.answer(profile_text, parse_mode="Markdown")
+        await message.answer(profile_text, parse_mode="HTML")
 
 @router.message(Command("settings"))
 async def settings_menu(message: Message):
@@ -120,7 +120,7 @@ async def settings_menu(message: Message):
             return
         
         settings_text = (
-            "⚙️ **Настройки профиля**\n"
+            "⚙️ <b>Настройки профиля</b>\n"
             "━━━━━━━━━━━━━━━\n\n"
             "Доступные команды:\n\n"
             "📝 /update_weight - Обновить текущий вес\n"
@@ -131,7 +131,7 @@ async def settings_menu(message: Message):
             "Для изменения других параметров используйте /reset"
         )
         
-        await message.answer(settings_text, parse_mode="Markdown")
+        await message.answer(settings_text, parse_mode="HTML")
 
 @router.message(Command("update_weight"))
 async def update_weight_start(message: Message):
@@ -165,17 +165,17 @@ async def show_stats(message: Message):
         
         # В будущем здесь будет подсчет реальной статистики из чек-инов
         stats_text = (
-            "📈 **Твоя статистика**\n"
+            "📈 <b>Твоя статистика</b>\n"
             "━━━━━━━━━━━━━━━\n\n"
             f"📅 Дней в программе: {days_in_program}\n"
             f"⚖️ Начальный вес: {user.current_weight} кг\n"
             f"🎯 Цель: {user.target_weight} кг\n\n"
-            "📊 **За последнюю неделю:**\n"
+            "📊 <b>За последнюю неделю:</b>\n"
             "├ Чек-инов: 0/7\n"
             "├ Средний вес: - кг\n"
             "├ Изменение: - кг\n"
             "└ Выполнено тренировок: 0\n\n"
-            "🏆 **Достижения:**\n"
+            "🏆 <b>Достижения:</b>\n"
             "• 🔓 Первый день - ✅\n"
             "• 🔒 Неделя без пропусков\n"
             "• 🔒 Месяц в программе\n"
@@ -183,4 +183,4 @@ async def show_stats(message: Message):
             "Продолжай в том же духе! 💪"
         )
         
-        await message.answer(stats_text, parse_mode="Markdown")
+        await message.answer(stats_text, parse_mode="HTML")

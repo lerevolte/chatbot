@@ -1,3 +1,4 @@
+from aiogram import Router
 from aiogram.types import Message, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
@@ -321,7 +322,11 @@ async def save_user_and_calculate(message: Message, state: FSMContext):
     
     async with get_session() as session:
         # Ищем или создаем пользователя
-        user = await session.get(User, {"telegram_id": message.from_user.id})
+        result = await session.execute(
+            select(User).where(User.telegram_id == message.from_user.id)
+        )
+        user = result.scalar_one_or_none()
+        
         if not user:
             user = User(
                 telegram_id=message.from_user.id,
@@ -369,6 +374,12 @@ async def save_user_and_calculate(message: Message, state: FSMContext):
         
         await session.commit()
     
+    goal_text = {
+        Goal.LOSE_WEIGHT: "Похудение",
+        Goal.GAIN_MUSCLE: "Набор мышечной массы",
+        Goal.MAINTAIN: "Поддержание веса"
+    }
+    
     # Формируем итоговое сообщение
     result_text = (
         "🎉 Отлично! Твой персональный план готов!\n\n"
@@ -390,7 +401,7 @@ async def save_user_and_calculate(message: Message, state: FSMContext):
     
     await message.answer(result_text, reply_markup=ReplyKeyboardRemove())
     await state.clear()
-
+    
 # Обработчик для повторного прохождения онбординга
 @router.message(Command("reset"))
 async def reset_onboarding(message: Message, state: FSMContext):
