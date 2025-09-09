@@ -5,7 +5,7 @@ from aiogram.fsm.storage.redis import RedisStorage
 from redis.asyncio import Redis
 
 from bot.config import settings
-from bot.handlers import start, profile
+from bot.handlers import start, profile, meal_plan
 from database.connection import init_db
 
 # Настройка логирования
@@ -30,6 +30,7 @@ async def main():
     # Регистрация хендлеров
     dp.include_router(start.router)
     dp.include_router(profile.router)
+    dp.include_router(meal_plan.router)
     
     # Запуск бота
     logger.info("Бот запущен")
