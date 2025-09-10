@@ -2,6 +2,7 @@ import json
 import random
 from typing import Dict, List, Optional
 from database.models import User, Goal, MealStyle
+from bot.services.ai_service import AIService
 
 class MealPlanGenerator:
     """Генератор планов питания на основе параметров пользователя"""
@@ -11,8 +12,6 @@ class MealPlanGenerator:
         self.ai_service = AIService()
         
         # ========== НОВЫЙ КОД: База данных блюд ==========
-        # В реальном проекте это должно быть в отдельной БД
-        self.meal_database = {: База данных блюд ==========
         # В реальном проекте это должно быть в отдельной БД
         self.meal_database = {
             "breakfast": {

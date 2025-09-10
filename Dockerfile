@@ -9,9 +9,10 @@ RUN apt-get update && apt-get install -y \
     # ========== НОВОЕ: для поддержки PDF ==========
     libpango-1.0-0 \
     libpangocairo-1.0-0 \
-    libgdk-pixbuf2.0-0 \
+    libgdk-pixbuf-2.0-0 \
     libffi-dev \
     shared-mime-info \
+    fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 # Копирование requirements и установка зависимостей

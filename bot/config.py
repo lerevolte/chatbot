@@ -20,6 +20,21 @@ class Settings(BaseSettings):
     # Payments (для будущего)
     PAYMENT_PROVIDER_TOKEN: Optional[str] = None
     
+    # ========== НОВОЕ: AI Integration ==========
+    # OPENAI_API_KEY: Optional[str] = None
+    # AI_MODEL: str = "gpt-3.5-turbo"  # или gpt-4
+
+    # Gemini
+    GEMINI_API_KEY: Optional[str] = None
+    AI_MODEL: str = "gemini-1.5-flash"
+
+    AI_TEMPERATURE: float = 0.7
+    AI_MAX_TOKENS: int = 2000
+    
+    # ========== НОВОЕ: File Storage ==========
+    UPLOAD_DIR: str = "/app/uploads"
+    PDF_DIR: str = "/app/pdfs"
+    
     # App settings
     TRIAL_DAYS: int = 7
     DEBUG: bool = False
@@ -27,6 +42,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "allow"  # ========== ДОБАВЛЕНО: разрешаем дополнительные поля ==========
     
     @property
     def database_url(self) -> str:

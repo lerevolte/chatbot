@@ -1,5 +1,5 @@
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
 from aiogram.filters import Command
 from datetime import datetime, timedelta
 from sqlalchemy import select
@@ -7,10 +7,15 @@ import json
 
 from database.models import User, MealPlan, Goal
 from database.connection import get_session
-from bot.services.meal_generator import MealPlanGenerator  # НОВЫЙ СЕРВИС
-from bot.keyboards.meal import get_meal_keyboard, get_day_keyboard  # НОВЫЕ КЛАВИАТУРЫ
+from bot.services.meal_generator import MealPlanGenerator 
+from bot.services.pdf_generator import PDFGenerator
+from bot.services.ai_service import AIService
+from bot.keyboards.meal import get_meal_keyboard, get_day_keyboard
+import os
+import logging
 
 router = Router()
+logger = logging.getLogger(__name__)
 
 @router.message(Command("meal_plan"))
 async def show_meal_plan(message: Message):
@@ -228,18 +233,17 @@ async def replace_meal(callback: CallbackQuery):
 
 # ========== НОВЫЙ КОД: Список покупок ==========
 @router.callback_query(F.data == "shopping_list")
+@router.callback_query(F.data == "shopping_list")
 async def show_shopping_list(callback: CallbackQuery):
     """Показать список покупок на неделю"""
     await callback.answer()
     
     async with get_session() as session:
-        # Получаем пользователя
         result = await session.execute(
             select(User).where(User.telegram_id == callback.from_user.id)
         )
         user = result.scalar_one_or_none()
         
-        # Получаем план на неделю
         current_week = datetime.utcnow().isocalendar()[1]
         result = await session.execute(
             select(MealPlan).where(
@@ -249,56 +253,36 @@ async def show_shopping_list(callback: CallbackQuery):
             )
         )
         meal_plans = result.scalars().all()
+
+        if not meal_plans:
+            await callback.message.answer("❌ План питания на эту неделю еще не создан.")
+            return
+
+        generator = PDFGenerator()
+        # ========== УБЕДИТЕСЬ, ЧТО ЗДЕСЬ ЕСТЬ AWAIT ==========
+        shopping_list_categorized = await generator._generate_shopping_list(meal_plans)
+        # ======================================================
         
-        # Собираем все ингредиенты
-        shopping_list = {}
-        for plan in meal_plans:
-            for meal in [plan.breakfast, plan.lunch, plan.dinner]:
-                if meal and meal.get('ingredients'):
-                    for ingredient in meal['ingredients']:
-                        # Парсим ингредиент (название и количество)
-                        parts = ingredient.split(' - ')
-                        name = parts[0]
-                        amount = parts[1] if len(parts) > 1 else "по вкусу"
-                        
-                        if name in shopping_list:
-                            shopping_list[name].append(amount)
-                        else:
-                            shopping_list[name] = [amount]
-        
-        # Форматируем список
         text = "🛒 **Список покупок на неделю**\n"
         text += "━━━━━━━━━━━━━━━\n\n"
         
-        categories = {
-            "Мясо и птица": ["курица", "говядина", "свинина", "индейка", "рыба"],
-            "Молочные продукты": ["молоко", "творог", "сыр", "йогурт", "кефир"],
-            "Овощи": ["помидор", "огурец", "капуста", "морковь", "лук", "картофель"],
-            "Фрукты": ["яблоко", "банан", "апельсин", "груша"],
-            "Крупы": ["рис", "гречка", "овсянка", "макароны"],
-            "Другое": []
-        }
+        has_items = False
+        if shopping_list_categorized: # Проверяем, что список не пустой
+            for category, items in shopping_list_categorized.items():
+                if items:
+                    has_items = True
+                    text += f"**{category}:**\n"
+                    for item_str in sorted(items):
+                        parts = item_str.split(' - ', 1)
+                        if len(parts) > 1:
+                            text += f"• {parts[0]}: {parts[1]}\n"
+                        else:
+                            text += f"• {item_str}\n"
+                    text += "\n"
         
-        categorized = {cat: {} for cat in categories}
-        
-        for item, amounts in shopping_list.items():
-            placed = False
-            for category, keywords in categories.items():
-                if any(kw in item.lower() for kw in keywords):
-                    categorized[category][item] = amounts
-                    placed = True
-                    break
-            if not placed:
-                categorized["Другое"][item] = amounts
-        
-        for category, items in categorized.items():
-            if items:
-                text += f"**{category}:**\n"
-                for item, amounts in items.items():
-                    text += f"• {item}: {', '.join(set(amounts))}\n"
-                text += "\n"
-        
-        # ========== ДОБАВЛЕНА КНОПКА ЭКСПОРТА В PDF ==========
+        if not has_items:
+            text += "Ваш план питания пока не содержит ингредиентов."
+
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(text="📄 Скачать PDF", callback_data="export_shopping_pdf"),
@@ -306,7 +290,7 @@ async def show_shopping_list(callback: CallbackQuery):
             ]
         ])
         
-        await callback.message.answer(text, reply_markup=keyboard, parse_mode="Markdown")
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
 
 # ========== НОВЫЙ ОБРАБОТЧИК: ЭКСПОРТ В PDF ==========
 @router.callback_query(F.data == "export_shopping_pdf")
@@ -405,7 +389,7 @@ async def export_plan_pdf(callback: CallbackQuery):
             os.remove(pdf_path)
             
         except Exception as e:
-            logger.error(f"Ошибка при генерации PDF: {e}")
+            logger.error(f"Ошибка при генерации PDF: {e}", exc_info=True)
             await callback.message.answer(
                 "❌ Ошибка при создании PDF. Попробуйте позже."
             )
@@ -494,7 +478,3 @@ async def cancel_regenerate(callback: CallbackQuery):
     """Отмена регенерации"""
     await callback.answer("Отменено")
     await callback.message.edit_text("План питания не был изменен.")
-
-# ========== ДОБАВЛЯЕМ ЛОГГЕР ==========
-import logging
-logger = logging.getLogger(__name__)

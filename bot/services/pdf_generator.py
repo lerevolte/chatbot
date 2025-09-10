@@ -13,8 +13,13 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT
 
 from bot.config import settings
 from database.models import User, MealPlan, Goal
+from bot.services.ai_service import AIService
 
 logger = logging.getLogger(__name__)
+
+pdfmetrics.registerFont(TTFont('DejaVu', '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'))
+pdfmetrics.registerFont(TTFont('DejaVu-Bold', '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'))
+
 
 class PDFGenerator:
     """Генератор PDF документов"""
@@ -63,7 +68,8 @@ class PDFGenerator:
             fontSize=24,
             textColor=colors.HexColor('#2E7D32'),
             spaceAfter=30,
-            alignment=TA_CENTER
+            alignment=TA_CENTER,
+            fontName='DejaVu-Bold'
         ))
         styles.add(ParagraphStyle(
             name='DayTitle',
@@ -71,8 +77,12 @@ class PDFGenerator:
             fontSize=16,
             textColor=colors.HexColor('#1976D2'),
             spaceAfter=12,
-            spaceBefore=20
+            spaceBefore=20,
+            fontName='DejaVu-Bold'
         ))
+
+        styles['Normal'].fontName = 'DejaVu'
+        styles['Heading2'].fontName = 'DejaVu-Bold'
         
         # Элементы документа
         elements = []
@@ -154,7 +164,8 @@ class PDFGenerator:
                 ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
                 ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTNAME', (0, 0), (-1, 0), 'DejaVu-Bold'),
+                ('FONTNAME', (0, 1), (-1, -1), 'DejaVu'),
                 ('FONTSIZE', (0, 0), (-1, 0), 10),
                 ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
                 ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#E8F5E9')),
@@ -170,7 +181,7 @@ class PDFGenerator:
         shopping_title = Paragraph("Список покупок на неделю", styles['CustomTitle'])
         elements.append(shopping_title)
         
-        shopping_list = self._generate_shopping_list(meal_plans)
+        shopping_list = await self._generate_shopping_list(meal_plans)
         for category, items in shopping_list.items():
             if items:
                 cat_title = Paragraph(f"<b>{category}:</b>", styles['Normal'])
@@ -218,7 +229,7 @@ class PDFGenerator:
         elements.append(Spacer(1, 20))
         
         # Генерируем список
-        shopping_list = self._generate_shopping_list(meal_plans)
+        shopping_list = await self._generate_shopping_list(meal_plans)
         
         # Создаем чек-лист
         data = []
@@ -234,6 +245,7 @@ class PDFGenerator:
             table = Table(data, colWidths=[20, 250, 80])
             table.setStyle(TableStyle([
                 ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, -1), 'DejaVu'),
                 ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
                 ('FONTSIZE', (0, 0), (-1, -1), 11),
                 ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
@@ -245,63 +257,80 @@ class PDFGenerator:
         logger.info(f"PDF список покупок сгенерирован: {filepath}")
         return filepath
     
-    def _generate_shopping_list(self, meal_plans: List[MealPlan]) -> Dict[str, List[str]]:
+    async def _generate_shopping_list(self, meal_plans: List[MealPlan]) -> Dict[str, List[str]]:
         """
-        Генерирует список покупок из планов питания
-        ========== ОБРАБОТКА ИНГРЕДИЕНТОВ ==========
+        Генерирует и категоризирует список покупок, 
+        предпочитая категоризацию через AI.
         """
-        shopping_dict = {}
-        
+        import re
+        from collections import defaultdict
+        from bot.services.ai_service import AIService
+
+        # === Шаг 1: Сбор и суммирование всех ингредиентов ===
+        summable_ingredients = defaultdict(lambda: defaultdict(float))
+        misc_ingredients = defaultdict(list)
+
         for plan in meal_plans:
             for meal in [plan.breakfast, plan.lunch, plan.dinner, plan.snack]:
-                if meal and meal.get('ingredients'):
-                    for ingredient in meal['ingredients']:
-                        # Парсим ингредиент
-                        parts = ingredient.split(' - ')
-                        name = parts[0].strip()
-                        amount = parts[1].strip() if len(parts) > 1 else ""
-                        
-                        if name not in shopping_dict:
-                            shopping_dict[name] = []
-                        if amount:
-                            shopping_dict[name].append(amount)
+                if not (meal and meal.get('ingredients')):
+                    continue
+                for ingredient_str in meal['ingredients']:
+                    parts = ingredient_str.split(' - ', 1)
+                    name = parts[0].strip()
+                    
+                    if len(parts) > 1:
+                        amount_str = parts[1].strip()
+                        match = re.match(r'(\d+(?:[.,]\d+)?)\s*([а-яА-Яa-zA-Z]+)', amount_str.replace(',', '.'))
+                        if match:
+                            value = float(match.group(1))
+                            unit = match.group(2).lower()
+                            summable_ingredients[name][unit] += value
+                        else:
+                            misc_ingredients[name].append(amount_str)
+                    else:
+                        misc_ingredients[name].append("1 уп.")
+
+        # === Шаг 2: Форматирование собранных ингредиентов в единый список ===
+        final_items_list = []
+        for item, units in summable_ingredients.items():
+            amount_parts = [f"{int(total) if total.is_integer() else f'{total:.1f}'} {unit}" for unit, total in units.items()]
+            final_items_list.append(f"{item} - {', '.join(amount_parts)}")
+
+        for item, amounts in misc_ingredients.items():
+            final_items_list.append(f"{item} - {', '.join(sorted(list(set(amounts))))}")
         
-        # Группируем по категориям
-        categories = {
-            "Мясо и птица": [],
-            "Рыба и морепродукты": [],
-            "Молочные продукты": [],
-            "Овощи": [],
-            "Фрукты": [],
-            "Крупы и макароны": [],
-            "Другое": []
-        }
-        
-        # Ключевые слова для категорий
+        # === Шаг 3: Попытка категоризации через AI ===
+        ai_service = AIService()
+        if ai_service.enabled and final_items_list:
+            categorized_by_ai = await ai_service.categorize_shopping_list(final_items_list)
+            if categorized_by_ai:
+                return categorized_by_ai
+
+
+        logger.warning("AI категоризация не удалась, используется ручной метод.")
+        categories = defaultdict(list)
         keywords = {
             "Мясо и птица": ["курица", "говядина", "свинина", "индейка", "фарш"],
             "Рыба и морепродукты": ["рыба", "треска", "лосось", "креветки", "тунец"],
             "Молочные продукты": ["молоко", "творог", "сыр", "йогурт", "кефир", "сметана"],
             "Овощи": ["помидор", "огурец", "капуста", "морковь", "лук", "картофель", "перец", "кабачок"],
             "Фрукты": ["яблоко", "банан", "апельсин", "груша", "ягоды"],
-            "Крупы и макароны": ["рис", "гречка", "овсянка", "макароны", "паста", "киноа"]
+            "Бакалея": ["рис", "гречка", "овсянка", "макароны", "паста", "киноа", "мука", "хлеб"]
         }
-        
-        # Распределяем по категориям
-        for item, amounts in shopping_dict.items():
+
+        for item_str in final_items_list:
+            item_name = item_str.split(' - ')[0]
             categorized = False
             for category, keys in keywords.items():
-                if any(key in item.lower() for key in keys):
-                    amount_str = ", ".join(set(amounts)) if amounts else ""
-                    categories[category].append(f"{item} - {amount_str}" if amount_str else item)
+                if any(key in item_name.lower() for key in keys):
+                    categories[category].append(item_str)
                     categorized = True
                     break
-            
             if not categorized:
-                amount_str = ", ".join(set(amounts)) if amounts else ""
-                categories["Другое"].append(f"{item} - {amount_str}" if amount_str else item)
-        
-        return categories
+                categories["Другое"].append(item_str)
+        logger.warning("AI категоризация не удалась или выключена. Список покупок будет пустым.")
+        #return {}
+        return dict(categories) # Возвращаем обычный dict для совместимости
     
     def _get_goal_text(self, goal: Goal) -> str:
         """Получить текстовое описание цели"""
