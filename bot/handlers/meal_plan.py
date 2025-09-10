@@ -298,4 +298,203 @@ async def show_shopping_list(callback: CallbackQuery):
                     text += f"• {item}: {', '.join(set(amounts))}\n"
                 text += "\n"
         
-        await callback.message.answer(text, parse_mode="Markdown")
+        # ========== ДОБАВЛЕНА КНОПКА ЭКСПОРТА В PDF ==========
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="📄 Скачать PDF", callback_data="export_shopping_pdf"),
+                InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_plan")
+            ]
+        ])
+        
+        await callback.message.answer(text, reply_markup=keyboard, parse_mode="Markdown")
+
+# ========== НОВЫЙ ОБРАБОТЧИК: ЭКСПОРТ В PDF ==========
+@router.callback_query(F.data == "export_shopping_pdf")
+async def export_shopping_pdf(callback: CallbackQuery):
+    """Экспорт списка покупок в PDF"""
+    await callback.answer("📄 Генерирую PDF...")
+    
+    async with get_session() as session:
+        # Получаем пользователя
+        result = await session.execute(
+            select(User).where(User.telegram_id == callback.from_user.id)
+        )
+        user = result.scalar_one_or_none()
+        
+        # Получаем план на неделю
+        current_week = datetime.utcnow().isocalendar()[1]
+        result = await session.execute(
+            select(MealPlan).where(
+                MealPlan.user_id == user.id,
+                MealPlan.week_number == current_week,
+                MealPlan.is_active == True
+            )
+        )
+        meal_plans = result.scalars().all()
+        
+        if not meal_plans:
+            await callback.message.answer("❌ План питания не найден")
+            return
+        
+        # Генерируем PDF
+        pdf_generator = PDFGenerator()
+        try:
+            pdf_path = await pdf_generator.generate_shopping_list_pdf(user, meal_plans)
+            
+            # Отправляем файл
+            pdf_file = FSInputFile(pdf_path, filename=f"shopping_list_{current_week}.pdf")
+            await callback.message.answer_document(
+                pdf_file,
+                caption="📄 Ваш список покупок на неделю\n\n"
+                       "Можете распечатать и взять с собой в магазин!"
+            )
+            
+            # Удаляем временный файл
+            os.remove(pdf_path)
+            
+        except Exception as e:
+            logger.error(f"Ошибка при генерации PDF: {e}")
+            await callback.message.answer(
+                "❌ Ошибка при создании PDF. Попробуйте позже."
+            )
+
+# ========== НОВЫЙ ОБРАБОТЧИК: ЭКСПОРТ ПЛАНА В PDF ==========
+@router.callback_query(F.data == "export_plan_pdf")
+async def export_plan_pdf(callback: CallbackQuery):
+    """Экспорт полного плана питания в PDF"""
+    await callback.answer("📄 Генерирую PDF с планом питания...")
+    
+    async with get_session() as session:
+        # Получаем пользователя
+        result = await session.execute(
+            select(User).where(User.telegram_id == callback.from_user.id)
+        )
+        user = result.scalar_one_or_none()
+        
+        # Получаем план на неделю
+        current_week = datetime.utcnow().isocalendar()[1]
+        result = await session.execute(
+            select(MealPlan).where(
+                MealPlan.user_id == user.id,
+                MealPlan.week_number == current_week,
+                MealPlan.is_active == True
+            ).order_by(MealPlan.day_number)
+        )
+        meal_plans = result.scalars().all()
+        
+        if not meal_plans:
+            await callback.message.answer("❌ План питания не найден")
+            return
+        
+        # Генерируем PDF
+        pdf_generator = PDFGenerator()
+        try:
+            pdf_path = await pdf_generator.generate_meal_plan_pdf(user, meal_plans)
+            
+            # Отправляем файл
+            pdf_file = FSInputFile(pdf_path, filename=f"meal_plan_week_{current_week}.pdf")
+            await callback.message.answer_document(
+                pdf_file,
+                caption="📄 Ваш план питания на неделю\n\n"
+                       "✅ Все блюда с калориями и БЖУ\n"
+                       "✅ Список покупок в конце документа\n"
+                       "✅ Можете распечатать для удобства"
+            )
+            
+            # Удаляем временный файл
+            os.remove(pdf_path)
+            
+        except Exception as e:
+            logger.error(f"Ошибка при генерации PDF: {e}")
+            await callback.message.answer(
+                "❌ Ошибка при создании PDF. Попробуйте позже."
+            )
+
+# ========== НОВЫЙ ОБРАБОТЧИК: РЕГЕНЕРАЦИЯ ПЛАНА ЧЕРЕЗ AI ==========
+@router.callback_query(F.data == "regenerate_plan")
+async def regenerate_plan(callback: CallbackQuery):
+    """Полная регенерация плана питания"""
+    await callback.answer()
+    
+    confirmation_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Да, создать новый", callback_data="confirm_regenerate"),
+            InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_regenerate")
+        ]
+    ])
+    
+    await callback.message.answer(
+        "⚠️ Вы уверены, что хотите создать новый план?\n\n"
+        "Текущий план будет полностью заменен новым.",
+        reply_markup=confirmation_keyboard
+    )
+
+@router.callback_query(F.data == "confirm_regenerate")
+async def confirm_regenerate(callback: CallbackQuery):
+    """Подтверждение регенерации плана"""
+    await callback.answer("🔄 Генерирую новый план...")
+    await callback.message.edit_text("🔄 Генерирую новый план питания...\nЭто может занять несколько секунд...")
+    
+    async with get_session() as session:
+        # Получаем пользователя
+        result = await session.execute(
+            select(User).where(User.telegram_id == callback.from_user.id)
+        )
+        user = result.scalar_one_or_none()
+        
+        # Деактивируем старый план
+        current_week = datetime.utcnow().isocalendar()[1]
+        result = await session.execute(
+            select(MealPlan).where(
+                MealPlan.user_id == user.id,
+                MealPlan.week_number == current_week
+            )
+        )
+        old_plans = result.scalars().all()
+        for plan in old_plans:
+            plan.is_active = False
+        
+        # Генерируем новый план
+        generator = MealPlanGenerator()
+        try:
+            weekly_plan = await generator.generate_weekly_plan(user)
+            
+            # Сохраняем в БД
+            for day_num, day_plan in enumerate(weekly_plan, 1):
+                meal_plan = MealPlan(
+                    user_id=user.id,
+                    week_number=current_week,
+                    day_number=day_num,
+                    breakfast=day_plan['breakfast'],
+                    lunch=day_plan['lunch'],
+                    dinner=day_plan['dinner'],
+                    snack=day_plan.get('snack'),
+                    total_calories=day_plan['total_calories'],
+                    total_protein=day_plan['total_protein'],
+                    total_fats=day_plan['total_fats'],
+                    total_carbs=day_plan['total_carbs']
+                )
+                session.add(meal_plan)
+            
+            await session.commit()
+            
+            await callback.message.edit_text(
+                "✅ Новый план питания успешно создан!\n\n"
+                "Используйте /meal_plan для просмотра"
+            )
+            
+        except Exception as e:
+            logger.error(f"Ошибка при регенерации плана: {e}")
+            await callback.message.edit_text(
+                "❌ Ошибка при генерации плана. Попробуйте позже."
+            )
+
+@router.callback_query(F.data == "cancel_regenerate")
+async def cancel_regenerate(callback: CallbackQuery):
+    """Отмена регенерации"""
+    await callback.answer("Отменено")
+    await callback.message.edit_text("План питания не был изменен.")
+
+# ========== ДОБАВЛЯЕМ ЛОГГЕР ==========
+import logging
+logger = logging.getLogger(__name__)

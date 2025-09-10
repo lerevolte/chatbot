@@ -7,7 +7,12 @@ class MealPlanGenerator:
     """Генератор планов питания на основе параметров пользователя"""
     
     def __init__(self):
+        # ========== ИНИЦИАЛИЗАЦИЯ AI СЕРВИСА ==========
+        self.ai_service = AIService()
+        
         # ========== НОВЫЙ КОД: База данных блюд ==========
+        # В реальном проекте это должно быть в отдельной БД
+        self.meal_database = {: База данных блюд ==========
         # В реальном проекте это должно быть в отдельной БД
         self.meal_database = {
             "breakfast": {
@@ -245,6 +250,38 @@ class MealPlanGenerator:
         Генерирует план на один день
         ========== НОВЫЙ КОД: Подбор блюд по параметрам ==========
         """
+        # ========== СНАЧАЛА ПРОБУЕМ AI ==========
+        if self.ai_service.enabled:
+            try:
+                ai_plan = await self.ai_service.generate_meal_plan(user)
+                if ai_plan:
+                    # Добавляем итоговые подсчеты
+                    total_calories = 0
+                    total_protein = 0
+                    total_fats = 0
+                    total_carbs = 0
+                    
+                    for meal_key in ['breakfast', 'lunch', 'dinner', 'snack']:
+                        if meal_key in ai_plan and ai_plan[meal_key]:
+                            total_calories += ai_plan[meal_key]['calories']
+                            total_protein += ai_plan[meal_key]['protein']
+                            total_fats += ai_plan[meal_key]['fats']
+                            total_carbs += ai_plan[meal_key]['carbs']
+                    
+                    return {
+                        'breakfast': ai_plan.get('breakfast'),
+                        'lunch': ai_plan.get('lunch'),
+                        'dinner': ai_plan.get('dinner'),
+                        'snack': ai_plan.get('snack') if user.meal_count == 4 else None,
+                        'total_calories': total_calories,
+                        'total_protein': total_protein,
+                        'total_fats': total_fats,
+                        'total_carbs': total_carbs
+                    }
+            except Exception as e:
+                logger.error(f"Ошибка при генерации через AI: {e}")
+        
+        # ========== FALLBACK: ИСПОЛЬЗУЕМ БАЗОВУЮ ГЕНЕРАЦИЮ ==========
         # Определяем категорию по цели
         goal_key = {
             Goal.LOSE_WEIGHT: "lose_weight",

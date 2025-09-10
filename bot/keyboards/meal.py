@@ -39,6 +39,10 @@ def get_day_keyboard(current_day: int, week_number: int) -> InlineKeyboardMarkup
             InlineKeyboardButton(text="🛒 Список покупок", callback_data="shopping_list")
         ],
         [
+            InlineKeyboardButton(text="📄 Скачать PDF", callback_data="export_plan_pdf"),  # ========== НОВАЯ КНОПКА ==========
+            InlineKeyboardButton(text="🔄 Новый план", callback_data="regenerate_plan")  # ========== НОВАЯ КНОПКА ==========
+        ],
+        [
             InlineKeyboardButton(text="📊 Мой профиль", callback_data="show_profile"),
             InlineKeyboardButton(text="✅ Чек-ин", callback_data="daily_checkin")
         ]
@@ -81,6 +85,5 @@ def get_shopping_list_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="◀️ Назад к плану", callback_data="back_to_plan")
         ]
     ])
-
-    return keyboard
     
+    return keyboard
