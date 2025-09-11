@@ -478,3 +478,22 @@ async def cancel_regenerate(callback: CallbackQuery):
     """Отмена регенерации"""
     await callback.answer("Отменено")
     await callback.message.edit_text("План питания не был изменен.")
+
+# ========== ЭТАП 3: ОБРАБОТЧИК ДЛЯ ЧЕК-ИНА ==========
+@router.callback_query(F.data == "daily_checkin")
+async def start_checkin_from_meal(callback: CallbackQuery):
+    """Переход к чек-ину из плана питания"""
+    await callback.answer()
+    
+    # Импортируем здесь чтобы избежать циклических импортов
+    from bot.handlers.checkin import checkin_menu
+    
+    # Вызываем меню чек-ина
+    await checkin_menu(callback.message)
+
+# ========== ЭТАП 3: ОБРАБОТЧИК ДЛЯ ВОЗВРАТА К ПЛАНУ ==========
+@router.callback_query(F.data == "back_to_plan")
+async def back_to_plan(callback: CallbackQuery):
+    """Возврат к плану питания"""
+    await callback.answer()
+    await show_meal_plan(callback.message)
