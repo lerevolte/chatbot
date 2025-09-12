@@ -29,7 +29,7 @@ async def init_db():
     """Инициализация БД - создание таблиц"""
     async with engine.begin() as conn:
         # Сначала удаляем все существующие таблицы
-        await conn.run_sync(Base.metadata.drop_all)
+        # await conn.run_sync(Base.metadata.drop_all)
         # Затем создаем их заново по актуальным моделям
         await conn.run_sync(Base.metadata.create_all)
     logger.info("База данных инициализирована")

@@ -1,11 +1,13 @@
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, Union
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from datetime import datetime, time
 from sqlalchemy import select
+from sqlalchemy.orm.attributes import flag_modified
 import logging
+import re # Добавлен импорт
 
 from database.models import User
 from database.connection import get_session
@@ -22,6 +24,77 @@ class SettingsStates(StatesGroup):
     evening_reminder_time = State()
     google_fit_auth = State()
 
+
+async def _display_reminder_settings(target: Union[Message, CallbackQuery]):
+    """
+    Отображает меню настроек напоминаний, корректно обрабатывая
+    и сообщения, и callback-запросы.
+    """
+    user_id = target.from_user.id
+    
+    async with get_session() as session:
+        user = await session.scalar(select(User).where(User.telegram_id == user_id))
+
+        # ИСПРАВЛЕНИЕ 3: Улучшенная проверка наличия пользователя
+        if not user or not user.onboarding_completed:
+            text = "❌ Сначала нужно пройти регистрацию. Используйте /start"
+            chat_id = target.chat.id if isinstance(target, Message) else target.message.chat.id
+            await target.bot.send_message(chat_id, text)
+            if isinstance(target, CallbackQuery):
+                await target.answer()
+            return
+
+        settings = user.reminder_settings or {}
+        timezone = user.timezone or "UTC"
+        style = user.reminder_style or "friendly"
+        all_disabled = settings.get("all_disabled", False)
+        water_reminders_on = settings.get("water_reminders", True) and not all_disabled
+
+        # ИСПРАВЛЕНИЕ 4: Корректная кнопка включения/выключения
+        if all_disabled:
+            toggle_all_button = InlineKeyboardButton(
+                text="✅ Включить все напоминания",
+                callback_data="enable_all_reminders"
+            )
+        else:
+            toggle_all_button = InlineKeyboardButton(
+                text="🔕 Отключить все напоминания",
+                callback_data="disable_all_reminders"
+            )
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=f"🌍 Часовой пояс: {timezone}", callback_data="set_timezone")],
+            [
+                InlineKeyboardButton(text="🌅 Утро: " + settings.get('morning_time', '08:00'), callback_data="set_morning_time"),
+                InlineKeyboardButton(text="🌙 Вечер: " + settings.get('evening_time', '20:00'), callback_data="set_evening_time")
+            ],
+            [InlineKeyboardButton(text=f"💬 Стиль: {style.capitalize()}", callback_data="set_reminder_style")],
+            [InlineKeyboardButton(
+                text=f"💧 Вода: {'✅ Вкл' if water_reminders_on else '❌ Выкл'}",
+                callback_data="toggle_water_reminders"
+            )],
+            [toggle_all_button],
+            [InlineKeyboardButton(text="◀️ Назад в главное меню", callback_data="back_to_main_menu")] # Добавлена кнопка Назад
+        ])
+        
+        text = "⏰ **Настройки напоминаний**\n\n"
+        style_descriptions = {
+            "friendly": "Дружелюбный - мягкие и позитивные",
+            "motivational": "Мотивирующий - вдохновляющие сообщения",
+            "strict": "Строгий - четкие и по делу"
+        }
+        text += f"Здесь вы можете настроить, как и когда бот будет напоминать вам о важных действиях.\n\n"
+        text += f"Текущий стиль: _{style_descriptions.get(style, '')}_"
+        
+        if isinstance(target, CallbackQuery):
+            try:
+                await target.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
+                await target.answer()
+            except Exception as e:
+                logger.debug(f"Could not edit message: {e}")
+        else:
+            await target.answer(text, reply_markup=keyboard, parse_mode="Markdown")
+
 # ============ ИНТЕГРАЦИИ ============
 @router.message(Command("integrations"))
 async def integrations_menu(message: Message):
@@ -37,67 +110,24 @@ async def integrations_menu(message: Message):
             return
         
         connected = user.connected_services or []
-        
-        # Формируем клавиатуру
         keyboard_buttons = []
-        
-        # Google Fit
         if "google_fit" in connected:
             keyboard_buttons.append([
-                InlineKeyboardButton(
-                    text="✅ Google Fit (подключен)",
-                    callback_data="sync_google_fit"
-                ),
-                InlineKeyboardButton(
-                    text="❌ Отключить",
-                    callback_data="disconnect_google_fit"
-                )
+                InlineKeyboardButton(text="✅ Google Fit (подключен)", callback_data="sync_google_fit"),
+                InlineKeyboardButton(text="❌ Отключить", callback_data="disconnect_google_fit")
             ])
         else:
-            keyboard_buttons.append([
-                InlineKeyboardButton(
-                    text="🔗 Подключить Google Fit",
-                    callback_data="connect_google_fit"
-                )
-            ])
+            keyboard_buttons.append([InlineKeyboardButton(text="🔗 Подключить Google Fit", callback_data="connect_google_fit")])
         
-        # Apple Health (заглушка)
-        keyboard_buttons.append([
-            InlineKeyboardButton(
-                text="🍎 Apple Health (скоро)",
-                callback_data="coming_soon"
-            )
-        ])
+        keyboard_buttons.append([InlineKeyboardButton(text="🍎 Apple Health (скоро)", callback_data="coming_soon")])
         
-        # Fitbit (заглушка)
-        keyboard_buttons.append([
-            InlineKeyboardButton(
-                text="⌚ Fitbit (скоро)",
-                callback_data="coming_soon"
-            )
-        ])
-        
-        # Синхронизация всех
         if connected:
-            keyboard_buttons.append([
-                InlineKeyboardButton(
-                    text="🔄 Синхронизировать все",
-                    callback_data="sync_all"
-                )
-            ])
+            keyboard_buttons.append([InlineKeyboardButton(text="🔄 Синхронизировать все", callback_data="sync_all")])
         
         keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
         
         text = "🔗 **Интеграции с фитнес-трекерами**\n\n"
-        
-        if connected:
-            text += "✅ Подключенные сервисы:\n"
-            for service in connected:
-                text += f"• {service.replace('_', ' ').title()}\n"
-            text += "\nДанные синхронизируются автоматически каждый день."
-        else:
-            text += "У вас пока нет подключенных сервисов.\n"
-            text += "Подключите фитнес-трекер для автоматического импорта данных!"
+        text += "Подключите фитнес-трекер для автоматического импорта данных о шагах, весе и активности."
         
         await message.answer(text, reply_markup=keyboard, parse_mode="Markdown")
 
@@ -187,53 +217,11 @@ async def disconnect_google_fit(callback: CallbackQuery):
 # ============ НАСТРОЙКИ НАПОМИНАНИЙ ============
 @router.message(Command("reminder_settings"))
 async def reminder_settings_menu(message: Message):
-    """Меню настроек напоминаний"""
-    async with get_session() as session:
-        result = await session.execute(
-            select(User).where(User.telegram_id == message.from_user.id)
-        )
-        user = result.scalar_one_or_none()
-        
-        if not user:
-            await message.answer("❌ Сначала нужно пройти регистрацию. Используйте /start")
-            return
-        
-        settings = user.reminder_settings or {}
-        timezone = user.timezone or "UTC"
-        style = user.reminder_style or "friendly"
-        
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text=f"🌍 Часовой пояс: {timezone}", callback_data="set_timezone"),
-            ],
-            [
-                InlineKeyboardButton(text="⏰ Время утреннего напоминания", callback_data="set_morning_time"),
-                InlineKeyboardButton(text="🌙 Время вечернего напоминания", callback_data="set_evening_time")
-            ],
-            [
-                InlineKeyboardButton(text=f"💬 Стиль: {style}", callback_data="set_reminder_style"),
-            ],
-            [
-                InlineKeyboardButton(text="💧 Напоминания о воде", callback_data="toggle_water_reminders"),
-                InlineKeyboardButton(text="🔕 Отключить все", callback_data="disable_all_reminders")
-            ]
-        ])
-        
-        text = "⏰ **Настройки напоминаний**\n\n"
-        text += f"🌍 Часовой пояс: {timezone}\n"
-        text += f"🌅 Утреннее: {settings.get('morning_time', '08:00')}\n"
-        text += f"🌙 Вечернее: {settings.get('evening_time', '20:00')}\n"
-        text += f"💧 Напоминания о воде: {'✅ Вкл' if settings.get('water_reminders', True) else '❌ Выкл'}\n"
-        text += f"💬 Стиль: {style}\n\n"
-        
-        style_descriptions = {
-            "friendly": "Дружелюбный - мягкие и позитивные напоминания",
-            "motivational": "Мотивирующий - вдохновляющие сообщения",
-            "strict": "Строгий - четкие и краткие напоминания"
-        }
-        text += f"_{style_descriptions.get(style, '')}_"
-        
-        await message.answer(text, reply_markup=keyboard, parse_mode="Markdown")
+    await _display_reminder_settings(message)
+
+@router.callback_query(F.data == "back_to_reminder_settings")
+async def back_to_reminder_settings(callback: CallbackQuery):
+    await _display_reminder_settings(callback)
 
 @router.callback_query(F.data == "set_timezone")
 async def set_timezone(callback: CallbackQuery, state: FSMContext):
@@ -273,205 +261,169 @@ async def set_timezone(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("tz_"))
 async def save_timezone(callback: CallbackQuery):
-    """Сохранение часового пояса"""
     timezone = callback.data.replace("tz_", "")
-    
     async with get_session() as session:
-        result = await session.execute(
-            select(User).where(User.telegram_id == callback.from_user.id)
-        )
-        user = result.scalar_one_or_none()
-        
-        user.timezone = timezone
-        await session.commit()
-    
+        user = await session.scalar(select(User).where(User.telegram_id == callback.from_user.id))
+        if user:
+            user.timezone = timezone
+            await session.commit()
     await callback.answer(f"✅ Часовой пояс установлен: {timezone}")
-    
-    # Обновляем в сервисе напоминаний
-    # reminder_service = SmartReminderService(callback.bot)
-    # await reminder_service.set_user_timezone(callback.from_user.id, timezone)
-    
-    # Возвращаемся в меню
-    await reminder_settings_menu(callback.message)
+    await _display_reminder_settings(callback)
 
 @router.callback_query(F.data == "set_morning_time")
 async def set_morning_time(callback: CallbackQuery, state: FSMContext):
-    """Установка времени утреннего напоминания"""
     await callback.answer()
-    
     await callback.message.answer(
-        "⏰ Введите время утреннего напоминания в формате ЧЧ:ММ\n"
-        "Например: 08:00\n\n"
-        "Или отправьте /cancel для отмены"
+        "⏰ Введите время утреннего напоминания в формате ЧЧ:ММ (например: 08:30)",
     )
     await state.set_state(SettingsStates.morning_reminder_time)
 
 @router.message(SettingsStates.morning_reminder_time)
 async def save_morning_time(message: Message, state: FSMContext):
-    """Сохранение времени утреннего напоминания"""
     try:
-        # Проверяем формат времени
-        time_parts = message.text.split(":")
-        hour = int(time_parts[0])
-        minute = int(time_parts[1])
+        # ИСПРАВЛЕНИЕ: Улучшенная проверка формата времени с помощью регулярного выражения
+        cleaned_text = message.text.strip()
+        match = re.fullmatch(r"(\d{1,2}):(\d{2})", cleaned_text)
+
+        if not match:
+            raise ValueError(f"Input '{cleaned_text}' does not match HH:MM format")
+
+        hour, minute = int(match.group(1)), int(match.group(2))
         
-        if 0 <= hour <= 23 and 0 <= minute <= 59:
-            time_str = f"{hour:02d}:{minute:02d}"
-            
-            async with get_session() as session:
-                result = await session.execute(
-                    select(User).where(User.telegram_id == message.from_user.id)
-                )
-                user = result.scalar_one_or_none()
-                
-                if not user.reminder_settings:
-                    user.reminder_settings = {}
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            raise ValueError(f"Time out of range: {hour}:{minute}")
+
+        time_str = f"{hour:02d}:{minute:02d}"
+        async with get_session() as session:
+            user = await session.scalar(select(User).where(User.telegram_id == message.from_user.id))
+            if user:
+                user.reminder_settings = user.reminder_settings or {}
                 user.reminder_settings["morning_time"] = time_str
+                flag_modified(user, "reminder_settings")
                 await session.commit()
+        await message.answer(f"✅ Утреннее напоминание установлено на {time_str}")
+        await state.clear()
+        await _display_reminder_settings(message)
+    except ValueError as e:
+        logger.warning(f"Invalid time format from user {message.from_user.id}: {e}")
+        await message.answer("❌ Неверный формат. Используйте ЧЧ:ММ (например, 08:30).")
+    except Exception as e:
+        logger.error(f"Unexpected error in save_morning_time: {e}", exc_info=True)
+        await message.answer("Произошла ошибка. Попробуйте снова.")
+        await state.clear()
+
+@router.callback_query(F.data == "set_evening_time")
+async def set_evening_time(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await callback.message.answer("⏰ Введите время вечернего напоминания в формате ЧЧ:ММ (например: 20:00)")
+    await state.set_state(SettingsStates.evening_reminder_time)
+
+@router.message(SettingsStates.evening_reminder_time)
+async def save_evening_time(message: Message, state: FSMContext):
+    try:
+        # ИСПРАВЛЕНИЕ: Улучшенная проверка формата времени с помощью регулярного выражения
+        cleaned_text = message.text.strip()
+        match = re.fullmatch(r"(\d{1,2}):(\d{2})", cleaned_text)
+
+        if not match:
+            raise ValueError(f"Input '{cleaned_text}' does not match HH:MM format")
             
-            await message.answer(f"✅ Время утреннего напоминания установлено: {time_str}")
-            
-            # Обновляем в сервисе
-            # reminder_service = SmartReminderService(message.bot)
-            # await reminder_service.set_custom_reminder_time(
-            #     message.from_user.id, "morning", time(hour, minute)
-            # )
-        else:
-            await message.answer("❌ Неверный формат времени. Попробуйте еще раз.")
-            return
-            
-    except (ValueError, IndexError):
-        await message.answer("❌ Неверный формат. Используйте формат ЧЧ:ММ (например, 08:00)")
-        return
-    
-    await state.clear()
+        hour, minute = int(match.group(1)), int(match.group(2))
+
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            raise ValueError(f"Time out of range: {hour}:{minute}")
+
+        time_str = f"{hour:02d}:{minute:02d}"
+        async with get_session() as session:
+            user = await session.scalar(select(User).where(User.telegram_id == message.from_user.id))
+            if user:
+                user.reminder_settings = user.reminder_settings or {}
+                user.reminder_settings["evening_time"] = time_str
+                flag_modified(user, "reminder_settings")
+                await session.commit()
+        await message.answer(f"✅ Вечернее напоминание установлено на {time_str}")
+        await state.clear()
+        await _display_reminder_settings(message)
+    except ValueError as e:
+        logger.warning(f"Invalid time format from user {message.from_user.id}: {e}")
+        await message.answer("❌ Неверный формат. Используйте ЧЧ:ММ (например, 20:00).")
+    except Exception as e:
+        logger.error(f"Unexpected error in save_evening_time: {e}", exc_info=True)
+        await message.answer("Произошла ошибка. Попробуйте снова.")
+        await state.clear()
 
 @router.callback_query(F.data == "set_reminder_style")
 async def set_reminder_style(callback: CallbackQuery):
-    """Выбор стиля напоминаний"""
     await callback.answer()
-    
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="😊 Дружелюбный", callback_data="style_friendly")
-        ],
-        [
-            InlineKeyboardButton(text="💪 Мотивирующий", callback_data="style_motivational")
-        ],
-        [
-            InlineKeyboardButton(text="📊 Строгий", callback_data="style_strict")
-        ],
-        [
-            InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_reminder_settings")
-        ]
+        [InlineKeyboardButton(text="😊 Дружелюбный", callback_data="style_friendly")],
+        [InlineKeyboardButton(text="💪 Мотивирующий", callback_data="style_motivational")],
+        [InlineKeyboardButton(text="📊 Строгий", callback_data="style_strict")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_reminder_settings")]
     ])
-    
-    await callback.message.edit_text(
-        "💬 **Выберите стиль напоминаний:**\n\n"
-        "😊 **Дружелюбный** - мягкие и позитивные сообщения\n"
-        "💪 **Мотивирующий** - вдохновляющие и энергичные\n"
-        "📊 **Строгий** - четкие и по делу\n",
-        reply_markup=keyboard,
-        parse_mode="Markdown"
-    )
+    await callback.message.edit_text("💬 **Выберите стиль напоминаний:**", reply_markup=keyboard, parse_mode="Markdown")
+
 
 @router.callback_query(F.data.startswith("style_"))
 async def save_reminder_style(callback: CallbackQuery):
-    """Сохранение стиля напоминаний"""
     style = callback.data.replace("style_", "")
-    
     async with get_session() as session:
-        result = await session.execute(
-            select(User).where(User.telegram_id == callback.from_user.id)
-        )
-        user = result.scalar_one_or_none()
-        
-        user.reminder_style = style
-        await session.commit()
-    
-    style_names = {
-        "friendly": "Дружелюбный",
-        "motivational": "Мотивирующий",
-        "strict": "Строгий"
-    }
-    
-    await callback.answer(f"✅ Стиль установлен: {style_names.get(style, style)}")
-    await reminder_settings_menu(callback.message)
+        user = await session.scalar(select(User).where(User.telegram_id == callback.from_user.id))
+        if user:
+            user.reminder_style = style
+            await session.commit()
+    await callback.answer(f"✅ Стиль изменен")
+    await _display_reminder_settings(callback)
 
 @router.callback_query(F.data == "toggle_water_reminders")
 async def toggle_water_reminders(callback: CallbackQuery):
-    """Переключение напоминаний о воде"""
     async with get_session() as session:
-        result = await session.execute(
-            select(User).where(User.telegram_id == callback.from_user.id)
-        )
-        user = result.scalar_one_or_none()
-        
-        if not user.reminder_settings:
-            user.reminder_settings = {}
-        
-        current = user.reminder_settings.get("water_reminders", True)
-        user.reminder_settings["water_reminders"] = not current
-        await session.commit()
-        
-        status = "включены" if not current else "выключены"
-        await callback.answer(f"💧 Напоминания о воде {status}")
-    
-    await reminder_settings_menu(callback.message)
+        user = await session.scalar(select(User).where(User.telegram_id == callback.from_user.id))
+        if user:
+            user.reminder_settings = user.reminder_settings or {}
+            current_status = user.reminder_settings.get("water_reminders", True)
+            user.reminder_settings["water_reminders"] = not current_status
+            flag_modified(user, "reminder_settings")
+            await session.commit()
+            await callback.answer(f"💧 Напоминания о воде {'выключены' if current_status else 'включены'}")
+    await _display_reminder_settings(callback)
 
 @router.callback_query(F.data == "disable_all_reminders")
 async def disable_all_reminders(callback: CallbackQuery):
-    """Отключение всех напоминаний"""
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="✅ Да, отключить все", callback_data="confirm_disable_all"),
+            InlineKeyboardButton(text="✅ Да, отключить", callback_data="confirm_disable_all"),
             InlineKeyboardButton(text="❌ Отмена", callback_data="back_to_reminder_settings")
         ]
     ])
-    
-    await callback.message.edit_text(
-        "⚠️ Вы уверены, что хотите отключить все напоминания?\n\n"
-        "Вы не будете получать:\n"
-        "• Утренние напоминания о чек-ине\n"
-        "• Вечерние напоминания\n"
-        "• Напоминания о воде\n",
-        reply_markup=keyboard
-    )
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✅ Да, отключить", callback_data="confirm_disable_all"), InlineKeyboardButton(text="❌ Отмена", callback_data="back_to_reminder_settings")]])
+    await callback.message.edit_text("⚠️ Вы уверены, что хотите отключить все напоминания?", reply_markup=keyboard)
+    await callback.answer()
 
 @router.callback_query(F.data == "confirm_disable_all")
 async def confirm_disable_all_reminders(callback: CallbackQuery):
-    """Подтверждение отключения всех напоминаний"""
     async with get_session() as session:
-        result = await session.execute(
-            select(User).where(User.telegram_id == callback.from_user.id)
-        )
-        user = result.scalar_one_or_none()
-        
-        if not user.reminder_settings:
-            user.reminder_settings = {}
-        
-        user.reminder_settings["all_disabled"] = True
-        user.reminder_settings["water_reminders"] = False
-        await session.commit()
-    
-    await callback.answer("✅ Все напоминания отключены")
-    
-    # Отключаем в сервисе
-    # reminder_service = SmartReminderService(callback.bot)
-    # await reminder_service.disable_reminders(callback.from_user.id)
-    
-    await callback.message.edit_text(
-        "🔕 Все напоминания отключены.\n\n"
-        "Вы можете включить их снова в любое время через /reminder_settings"
-    )
+        user = await session.scalar(select(User).where(User.telegram_id == callback.from_user.id))
+        if user:
+            user.reminder_settings = user.reminder_settings or {}
+            user.reminder_settings["all_disabled"] = True
+            flag_modified(user, "reminder_settings")
+            await session.commit()
+    await callback.answer("🔕 Все напоминания отключены", show_alert=True)
+    await _display_reminder_settings(callback)
 
-@router.callback_query(F.data == "back_to_reminder_settings")
-async def back_to_reminder_settings(callback: CallbackQuery):
-    """Возврат в меню настроек напоминаний"""
-    await callback.answer()
-    await reminder_settings_menu(callback.message)
+@router.callback_query(F.data == "enable_all_reminders")
+async def enable_all_reminders(callback: CallbackQuery):
+    async with get_session() as session:
+        user = await session.scalar(select(User).where(User.telegram_id == callback.from_user.id))
+        if user:
+            user.reminder_settings = user.reminder_settings or {}
+            user.reminder_settings["all_disabled"] = False
+            flag_modified(user, "reminder_settings")
+            await session.commit()
+    await callback.answer("✅ Все напоминания включены", show_alert=True)
+    await _display_reminder_settings(callback)
 
 @router.callback_query(F.data == "coming_soon")
 async def coming_soon(callback: CallbackQuery):
-    """Заглушка для функций в разработке"""
     await callback.answer("🚧 Эта функция скоро будет доступна!", show_alert=True)
