@@ -9,5 +9,21 @@ pydantic==2.9.2
 pydantic-settings==2.4.0
 #openai==1.12.0
 google-generativeai==0.7.1
+pillow==10.4.0
 reportlab==4.1.0
 aiofiles==24.1.0
+# Для работы с часовыми поясами
+zoneinfo==0.2.1
+pytz==2024.2
+
+# Графики и визуализация
+matplotlib==3.9.2
+numpy==1.26.4
+
+# Для шифрования токенов (опционально)
+cryptography==42.0.8
+
+# Для OAuth (Google Fit и др.)
+google-auth==2.35.0
+google-auth-oauthlib==1.2.1
+google-auth-httplib2==0.2.0

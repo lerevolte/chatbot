@@ -362,7 +362,7 @@ async def process_meal_type(message: Message, state: FSMContext):
 
 @router.message(FoodPhotoStates.photo, F.photo)
 async def process_food_photo(message: Message, state: FSMContext):
-    """Обработка фото еды"""
+    """Обработка фото еды с детальным анализом"""
     data = await state.get_data()
     
     photo: PhotoSize = message.photo[-1]
@@ -385,10 +385,11 @@ async def process_food_photo(message: Message, state: FSMContext):
         await state.clear()
         return
     
-    await message.answer("🤖 Анализирую фото...")
+    await message.answer("🤖 Анализирую фото... Это займет несколько секунд")
     
-    ai_service = AIService()
-    analysis = await ai_service.analyze_food_photo(filepath)
+    # Используем улучшенный Vision Service
+    from bot.services.vision_service import VisionService
+    vision_service = VisionService()
     
     async with get_session() as session:
         result = await session.execute(
@@ -396,7 +397,39 @@ async def process_food_photo(message: Message, state: FSMContext):
         )
         user = result.scalar_one_or_none()
         
+        # Анализируем фото с учетом данных пользователя
+        analysis = await vision_service.analyze_food_photo(filepath, user)
+        
+        if not analysis.get('success'):
+            await message.answer(
+                "⚠️ Не удалось точно определить блюдо, но фото сохранено.\n"
+                "Вы можете добавить описание вручную."
+            )
+        
+        # Получаем план питания для сравнения
         today = date.today()
+        current_week = datetime.utcnow().isocalendar()[1]
+        day_number = datetime.utcnow().weekday() + 1
+        
+        result = await session.execute(
+            select(MealPlan).where(
+                and_(
+                    MealPlan.user_id == user.id,
+                    MealPlan.week_number == current_week,
+                    MealPlan.day_number == day_number
+                )
+            )
+        )
+        meal_plan = result.scalar_one_or_none()
+        
+        # Сравниваем с планом, если он есть
+        comparison = None
+        if meal_plan and analysis.get('success'):
+            planned_meal = getattr(meal_plan, data['meal_type'], None)
+            if planned_meal:
+                comparison = await vision_service.compare_with_plan(filepath, planned_meal, user)
+        
+        # Сохраняем чек-ин
         result = await session.execute(
             select(CheckIn).where(
                 and_(
@@ -412,17 +445,23 @@ async def process_food_photo(message: Message, state: FSMContext):
             checkin = CheckIn(user_id=user.id)
             session.add(checkin)
         
+        # Сохраняем путь к фото и данные анализа
         if data['meal_type'] == 'breakfast':
             checkin.breakfast_photo = filepath
+            checkin.breakfast_analysis = analysis if analysis.get('success') else None
         elif data['meal_type'] == 'lunch':
             checkin.lunch_photo = filepath
+            checkin.lunch_analysis = analysis if analysis.get('success') else None
         elif data['meal_type'] == 'dinner':
             checkin.dinner_photo = filepath
+            checkin.dinner_analysis = analysis if analysis.get('success') else None
         else:
             checkin.snack_photo = filepath
+            checkin.snack_analysis = analysis if analysis.get('success') else None
         
         await session.commit()
     
+    # Формируем ответ
     meal_names = {
         "breakfast": "Завтрак",
         "lunch": "Обед",
@@ -431,9 +470,47 @@ async def process_food_photo(message: Message, state: FSMContext):
     }
     
     response = f"✅ **{meal_names[data['meal_type']]} сохранен!**\n\n"
-    response += f"📸 Фото сохранено\n"
-    response += f"🤖 {analysis['description']}\n\n"
-    response += "💡 _В следующей версии я смогу точно определять блюда и считать калории!_"
+    
+    if analysis.get('success'):
+        response += f"🍽 **Распознано:** {analysis.get('dish_name', 'Неизвестное блюдо')}\n"
+        response += f"📊 **Пищевая ценность:**\n"
+        response += f"• Калории: {analysis.get('calories', 0)} ккал\n"
+        response += f"• Белки: {analysis.get('protein', 0)}г\n"
+        response += f"• Жиры: {analysis.get('fats', 0)}г\n"
+        response += f"• Углеводы: {analysis.get('carbs', 0)}г\n"
+        
+        # Добавляем оценку полезности
+        healthiness = analysis.get('healthiness_score', 0)
+        if healthiness >= 8:
+            response += f"\n🌟 Полезность: {healthiness}/10 - Отличный выбор!\n"
+        elif healthiness >= 6:
+            response += f"\n⭐ Полезность: {healthiness}/10 - Хорошее блюдо\n"
+        else:
+            response += f"\n⚠️ Полезность: {healthiness}/10 - Можно найти более полезную альтернативу\n"
+        
+        # Добавляем сравнение с планом
+        if comparison and comparison.get('success'):
+            response += f"\n**Соответствие плану:** {comparison['match_emoji']} {comparison['match_text']}\n"
+            
+            if comparison.get('daily_adjustments'):
+                response += "\n**Рекомендации на день:**\n"
+                for adjustment in comparison['daily_adjustments']:
+                    response += f"• {adjustment}\n"
+        
+        # Персональные рекомендации
+        if analysis.get('personal_recommendations'):
+            recs = analysis['personal_recommendations']
+            if recs.get('warnings'):
+                response += "\n**Предупреждения:**\n"
+                for warning in recs['warnings']:
+                    response += f"{warning}\n"
+            if recs.get('suggestions'):
+                response += "\n**Советы:**\n"
+                for suggestion in recs['suggestions']:
+                    response += f"{suggestion}\n"
+    else:
+        response += "📸 Фото сохранено для истории\n"
+        response += "⚠️ Автоматический анализ временно недоступен\n"
     
     await message.answer(response, parse_mode="Markdown")
     await state.clear()
