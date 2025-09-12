@@ -10,8 +10,7 @@ from sqlalchemy import select
 from datetime import datetime, timedelta
 import logging
 
-from database.models import User
-from database.payment_models import SubscriptionPlan, PromoType
+from database.models import User, SubscriptionPlan, PromoType
 from database.connection import get_session
 from bot.services.payment_service import PaymentService
 

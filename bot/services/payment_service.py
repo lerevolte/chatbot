@@ -8,9 +8,8 @@ from aiogram import Bot
 from aiogram.types import LabeledPrice, PreCheckoutQuery, Message
 from sqlalchemy import select, and_, or_
 
-from database.models import User
-from database.payment_models import (
-    Subscription, Payment, PromoCode, PromoCodeUse, 
+from database.models import (
+    User, Subscription, Payment, PromoCode, PromoCodeUse, 
     PricingPlan, SubscriptionPlan, PaymentStatus, 
     PaymentProvider, PromoType
 )

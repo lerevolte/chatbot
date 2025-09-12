@@ -146,7 +146,7 @@ async def main():
     finally:
         auto_sync.cancel()
         await bot.session.close()
-        await redis.close()
+        await redis.aclose()
 
 if __name__ == "__main__":
     try:
