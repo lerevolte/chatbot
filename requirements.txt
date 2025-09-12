@@ -12,8 +12,6 @@ google-generativeai==0.7.1
 pillow==10.4.0
 reportlab==4.1.0
 aiofiles==24.1.0
-# Для работы с часовыми поясами
-zoneinfo==0.2.1
 pytz==2024.2
 
 # Графики и визуализация
