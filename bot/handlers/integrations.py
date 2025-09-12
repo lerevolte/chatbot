@@ -194,6 +194,10 @@ async def reminder_settings_menu(message: Message):
         )
         user = result.scalar_one_or_none()
         
+        if not user:
+            await message.answer("❌ Сначала нужно пройти регистрацию. Используйте /start")
+            return
+        
         settings = user.reminder_settings or {}
         timezone = user.timezone or "UTC"
         style = user.reminder_style or "friendly"

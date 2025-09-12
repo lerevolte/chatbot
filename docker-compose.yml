@@ -49,6 +49,8 @@ services:
     volumes:
       - ./bot:/app/bot
       - ./database:/app/database
+      - ./alembic:/app/alembic
+      - ./alembic.ini:/app/alembic.ini
       - ./logs:/app/logs
 
 volumes:

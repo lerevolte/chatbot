@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime
 from sqlalchemy import (
-    Column, Integer, String, Float, DateTime, Boolean, 
+    Column, Integer, BigInteger, String, Float, DateTime, Boolean, 
     Text, JSON, ForeignKey, Enum as SQLEnum
 )
 from sqlalchemy.ext.declarative import declarative_base
@@ -33,7 +33,7 @@ class User(Base):
     __tablename__ = "users"
     
     id = Column(Integer, primary_key=True)
-    telegram_id = Column(Integer, unique=True, nullable=False, index=True)
+    telegram_id = Column(BigInteger, unique=True, nullable=False, index=True)
     username = Column(String(100), nullable=True)
     first_name = Column(String(100), nullable=True)
     

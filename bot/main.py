@@ -9,6 +9,7 @@ from bot.handlers import start, profile, meal_plan, checkin, stats, integrations
 from bot.services.smart_reminder import SmartReminderService
 from bot.services.fitness_tracker_integration import FitnessIntegrationService
 from database.connection import init_db
+from datetime import datetime, timedelta
 
 # Настройка логирования
 logging.basicConfig(
