@@ -7,7 +7,7 @@ from sqlalchemy import select, and_
 import logging
 import os
 
-from database.models import User, CheckIn
+from database.models import User, CheckIn, MealPlan
 from database.connection import get_session
 from bot.states.checkin import MorningCheckInStates, EveningCheckInStates, FoodPhotoStates
 from bot.keyboards.checkin import get_mood_keyboard, get_meal_type_keyboard, get_water_keyboard, get_quick_weight_keyboard
@@ -378,7 +378,7 @@ async def process_food_photo(message: Message, state: FSMContext):
     bot = message.bot
     try:
         file = await bot.get_file(file_id)
-        await bot.download_file(file.file_path, filepath)
+        await bot.download_file(file.file_path, filepath, timeout=120)
     except Exception as e:
         logger.error(f"Ошибка при сохранении фото: {e}")
         await message.answer("❌ Ошибка при сохранении фото")
@@ -427,7 +427,8 @@ async def process_food_photo(message: Message, state: FSMContext):
         if meal_plan and analysis.get('success'):
             planned_meal = getattr(meal_plan, data['meal_type'], None)
             if planned_meal:
-                comparison = await vision_service.compare_with_plan(filepath, planned_meal, user)
+                # ИСПРАВЛЕНИЕ: Передаем результат анализа (analysis), а не путь к файлу
+                comparison = await vision_service.compare_with_plan(analysis, planned_meal)
         
         # Сохраняем чек-ин
         result = await session.execute(

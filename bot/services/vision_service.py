@@ -162,30 +162,37 @@ class VisionService:
 
     async def compare_with_plan(self, food_data: Dict, planned_meal: Dict) -> Dict:
         """
-        Сравнивает распознанную еду с запланированным приемом пищи
+        Сравнивает распознанную еду с запланированным приемом пищи и возвращает
+        структуру, ожидаемую хендлером.
         """
         deviation = {
-            "calories": food_data['estimated_calories'] - planned_meal.get('calories', 0),
-            "protein": food_data['protein'] - planned_meal.get('protein', 0),
-            "fats": food_data['fats'] - planned_meal.get('fats', 0),
-            "carbs": food_data['carbs'] - planned_meal.get('carbs', 0)
+            "calories": food_data.get('estimated_calories', 0) - planned_meal.get('calories', 0),
+            "protein": food_data.get('protein', 0) - planned_meal.get('protein', 0),
+            "fats": food_data.get('fats', 0) - planned_meal.get('fats', 0),
+            "carbs": food_data.get('carbs', 0) - planned_meal.get('carbs', 0)
         }
         
         # Оценка соответствия плану
         total_deviation = abs(deviation['calories'])
-        if total_deviation < 50:
-            match_score = "Отлично! Полностью соответствует плану"
+        
+        if total_deviation < 75:
+            match_text = "Полностью соответствует плану"
+            match_emoji = "✅"
         elif total_deviation < 150:
-            match_score = "Хорошо! Небольшое отклонение от плана"
-        elif total_deviation < 300:
-            match_score = "Заметное отклонение от плана"
+            match_text = "Небольшое отклонение от плана"
+            match_emoji = "⚠️"
         else:
-            match_score = "Значительное отклонение от плана"
+            match_text = "Значительное отклонение от плана"
+            match_emoji = "❌"
+        
+        suggestions = self._get_meal_suggestions(deviation)
         
         return {
-            "deviation": deviation,
-            "match_score": match_score,
-            "suggestions": self._get_meal_suggestions(deviation)
+            "success": True,
+            "match_text": match_text,
+            "match_emoji": match_emoji,
+            "daily_adjustments": suggestions,
+            "deviation": deviation
         }
     
     def _get_meal_suggestions(self, deviation: Dict) -> list:

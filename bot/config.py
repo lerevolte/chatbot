@@ -35,9 +35,19 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = "/app/uploads"
     PDF_DIR: str = "/app/pdfs"
     
-    # App settings
+    # Payments
+    TELEGRAM_PAYMENT_TOKEN: Optional[str] = None  # Токен от BotFather
+    YOOKASSA_TOKEN: Optional[str] = None  # Для российских платежей
+    YOOKASSA_SHOP_ID: Optional[str] = None
+    CRYPTOBOT_TOKEN: Optional[str] = None  # Для крипто-платежей
+    
+    # Настройки подписки
     TRIAL_DAYS: int = 7
+    SUBSCRIPTION_MONTHLY_PRICE: int = 299  # В рублях
+    SUBSCRIPTION_QUARTERLY_PRICE: int = 699
+    SUBSCRIPTION_YEARLY_PRICE: int = 1999
     DEBUG: bool = False
+    
     
     class Config:
         env_file = ".env"
