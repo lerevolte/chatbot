@@ -5,7 +5,7 @@ from aiogram.fsm.storage.redis import RedisStorage
 from redis.asyncio import Redis
 
 from bot.config import settings
-from bot.handlers import start, profile, meal_plan, checkin, stats, integrations, payment
+from bot.handlers import start, profile, meal_plan, checkin, stats, integrations, payment, analytics
 from bot.services.smart_reminder import SmartReminderService
 from bot.services.fitness_tracker_integration import FitnessIntegrationService
 from database.connection import init_db
@@ -135,6 +135,7 @@ async def main():
     dp.include_router(stats.router)  # Новый роутер для статистики
     dp.include_router(integrations.router)  # Новый роутер для интеграций
     dp.include_router(payment.router)
+    dp.include_router(analytics.router)
 
     # Создаем фоновые задачи
     auto_sync = asyncio.create_task(auto_sync_task())
