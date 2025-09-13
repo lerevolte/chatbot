@@ -80,6 +80,299 @@ class AnalyticsService:
         plt.close()
         
         return buffer.getvalue()
+
+    async def generate_plateau_breakthrough_chart(self, user_id: int) -> bytes:
+        """Генерирует график с планом прорыва плато"""
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
+        
+        async with get_session() as session:
+            # Получаем историю веса
+            month_ago = datetime.now() - timedelta(days=30)
+            result = await session.execute(
+                select(CheckIn).where(
+                    and_(
+                        CheckIn.user_id == user_id,
+                        CheckIn.date >= month_ago,
+                        CheckIn.weight.isnot(None)
+                    )
+                ).order_by(CheckIn.date)
+            )
+            checkins = result.scalars().all()
+            
+            if len(checkins) < 2:
+                ax1.text(0.5, 0.5, 'Недостаточно данных', ha='center', va='center')
+                ax2.text(0.5, 0.5, 'Недостаточно данных', ha='center', va='center')
+            else:
+                dates = [c.date for c in checkins]
+                weights = [c.weight for c in checkins]
+                
+                # График веса с выделением плато
+                ax1.plot(dates, weights, 'o-', color=self.colors['primary'], 
+                        linewidth=2, markersize=6, label='Вес')
+                
+                # Определяем зону плато
+                plateau_start = None
+                for i in range(len(weights) - 7):
+                    if max(weights[i:i+7]) - min(weights[i:i+7]) < 0.5:
+                        plateau_start = i
+                        break
+                
+                if plateau_start is not None:
+                    ax1.axvspan(dates[plateau_start], dates[-1], 
+                               color=self.colors['warning'], alpha=0.2, 
+                               label='Зона плато')
+                
+                # Прогноз после применения стратегий
+                future_dates = [dates[-1] + timedelta(days=i) for i in range(1, 15)]
+                projected_weights = []
+                current = weights[-1]
+                for i in range(14):
+                    # Моделируем прорыв плато
+                    if i < 7:
+                        current -= 0.05  # Медленное снижение
+                    else:
+                        current -= 0.15  # Ускорение после адаптации
+                    projected_weights.append(current)
+                
+                ax1.plot(future_dates, projected_weights, '--', 
+                        color=self.colors['success'], linewidth=2, 
+                        alpha=0.7, label='Прогноз после адаптации')
+                
+                ax1.set_title('План прорыва плато', fontsize=14, fontweight='bold')
+                ax1.set_xlabel('Дата')
+                ax1.set_ylabel('Вес (кг)')
+                ax1.legend()
+                ax1.grid(True, alpha=0.3)
+                
+                # График калорий с циклированием
+                ax2.set_title('Стратегия циклирования калорий', fontsize=14, fontweight='bold')
+                
+                # Получаем данные пользователя
+                result = await session.execute(
+                    select(User).where(User.id == user_id)
+                )
+                user = result.scalar_one_or_none()
+                
+                if user:
+                    base_calories = user.daily_calories
+                    days = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
+                    calories = [
+                        base_calories - 300,  # Пн - низкие
+                        base_calories - 100,  # Вт - средние
+                        base_calories - 300,  # Ср - низкие
+                        base_calories,         # Чт - обычные
+                        base_calories - 300,  # Пт - низкие
+                        base_calories - 100,  # Сб - средние
+                        base_calories + 200   # Вс - рефид
+                    ]
+                    
+                    colors_cal = ['#EF5350' if c < base_calories - 200 else 
+                                 '#FFA726' if c < base_calories else 
+                                 '#66BB6A' for c in calories]
+                    
+                    bars = ax2.bar(days, calories, color=colors_cal)
+                    ax2.axhline(y=base_calories, color='blue', linestyle='--', 
+                               alpha=0.5, label=f'Базовые калории ({base_calories})')
+                    
+                    # Добавляем значения на столбцы
+                    for bar, cal in zip(bars, calories):
+                        height = bar.get_height()
+                        ax2.text(bar.get_x() + bar.get_width()/2., height,
+                                f'{int(cal)}',
+                                ha='center', va='bottom')
+                    
+                    ax2.set_ylabel('Калории')
+                    ax2.legend()
+                    ax2.grid(True, alpha=0.3, axis='y')
+        
+        plt.tight_layout()
+        buffer = io.BytesIO()
+        plt.savefig(buffer, format='png', dpi=100, bbox_inches='tight')
+        buffer.seek(0)
+        plt.close()
+        
+        return buffer.getvalue()
+    
+    async def generate_motivation_card(self, user_id: int) -> bytes:
+        """Генерирует мотивационную карточку с достижениями"""
+        fig = plt.figure(figsize=(10, 14))
+        
+        # Создаем красивый фон
+        ax = fig.add_subplot(111)
+        ax.set_xlim(0, 10)
+        ax.set_ylim(0, 14)
+        ax.axis('off')
+        
+        # Градиентный фон
+        gradient = np.linspace(0, 1, 256).reshape(256, 1)
+        ax.imshow(gradient, extent=[0, 10, 0, 14], aspect='auto', 
+                 cmap='RdYlGn', alpha=0.3)
+        
+        async with get_session() as session:
+            result = await session.execute(
+                select(User).where(User.telegram_id == user_id)
+            )
+            user = result.scalar_one_or_none()
+            
+            # Заголовок
+            ax.text(5, 13, 'ТВОИ ДОСТИЖЕНИЯ', fontsize=24, fontweight='bold',
+                   ha='center', color=self.colors['primary'])
+            
+            # Получаем статистику
+            result = await session.execute(
+                select(CheckIn).where(
+                    CheckIn.user_id == user.id
+                ).order_by(CheckIn.date)
+            )
+            all_checkins = result.scalars().all()
+            
+            if all_checkins:
+                # Статистика
+                weights = [c.weight for c in all_checkins if c.weight]
+                if len(weights) >= 2:
+                    weight_lost = weights[0] - weights[-1]
+                    
+                    # Блок потери веса
+                    if weight_lost > 0:
+                        ax.add_patch(Rectangle((1, 10), 8, 1.5, 
+                                              facecolor=self.colors['success'], 
+                                              alpha=0.3, edgecolor='black'))
+                        ax.text(5, 10.75, f'🏆 СБРОШЕНО: {weight_lost:.1f} КГ',
+                               fontsize=18, fontweight='bold', ha='center')
+                
+                # Серия дней
+                today = datetime.now().date()
+                streak = 0
+                for i in range(len(all_checkins) - 1, -1, -1):
+                    if all_checkins[i].date.date() == today - timedelta(days=len(all_checkins)-1-i):
+                        streak += 1
+                    else:
+                        break
+                
+                if streak > 0:
+                    ax.add_patch(Rectangle((1, 8), 8, 1.5, 
+                                          facecolor=self.colors['warning'], 
+                                          alpha=0.3, edgecolor='black'))
+                    ax.text(5, 8.75, f'🔥 СЕРИЯ: {streak} ДНЕЙ',
+                           fontsize=18, fontweight='bold', ha='center')
+                
+                # Общее количество чек-инов
+                ax.add_patch(Rectangle((1, 6), 8, 1.5, 
+                                      facecolor=self.colors['info'], 
+                                      alpha=0.3, edgecolor='black'))
+                ax.text(5, 6.75, f'✅ ЧЕКИНОВ: {len(all_checkins)}',
+                       fontsize=18, fontweight='bold', ha='center')
+                
+                # Средние показатели
+                steps = [c.steps for c in all_checkins if c.steps]
+                if steps:
+                    avg_steps = sum(steps) / len(steps)
+                    ax.text(5, 4.5, f'👟 Среднее шагов: {avg_steps:.0f}',
+                           fontsize=14, ha='center')
+                
+                water = [c.water_ml for c in all_checkins if c.water_ml]
+                if water:
+                    avg_water = sum(water) / len(water) / 1000
+                    ax.text(5, 3.5, f'💧 Среднее воды: {avg_water:.1f}л',
+                           fontsize=14, ha='center')
+                
+                # Мотивационная цитата
+                quotes = [
+                    "Каждый день - это новая возможность!",
+                    "Ты сильнее, чем думаешь!",
+                    "Прогресс, а не совершенство!",
+                    "Верь в себя и все получится!",
+                    "Маленькие шаги ведут к большим целям!"
+                ]
+                import random
+                quote = random.choice(quotes)
+                
+                ax.text(5, 1.5, f'"{quote}"', fontsize=16, 
+                       fontstyle='italic', ha='center', 
+                       color=self.colors['dark'])
+                
+                # Дата создания
+                ax.text(5, 0.5, datetime.now().strftime('%d.%m.%Y'),
+                       fontsize=10, ha='center', alpha=0.7)
+        
+        buffer = io.BytesIO()
+        plt.savefig(buffer, format='png', dpi=150, bbox_inches='tight')
+        buffer.seek(0)
+        plt.close()
+        
+        return buffer.getvalue()
+    
+    async def export_analytics_pdf(self, user_id: int) -> str:
+        """Экспортирует полную аналитику в PDF"""
+        from reportlab.lib.pagesizes import A4
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, PageBreak
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.lib.units import mm
+        import tempfile
+        
+        # Создаем временный файл
+        pdf_path = f"/tmp/analytics_{user_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+        
+        doc = SimpleDocTemplate(
+            pdf_path,
+            pagesize=A4,
+            rightMargin=20*mm,
+            leftMargin=20*mm,
+            topMargin=20*mm,
+            bottomMargin=20*mm
+        )
+        
+        styles = getSampleStyleSheet()
+        elements = []
+        
+        # Заголовок
+        title = Paragraph("Полный аналитический отчет", styles['Title'])
+        elements.append(title)
+        elements.append(Spacer(1, 20))
+        
+        async with get_session() as session:
+            result = await session.execute(
+                select(User).where(User.telegram_id == user_id)
+            )
+            user = result.scalar_one_or_none()
+            
+            # Информация о пользователе
+            user_info = f"""
+            <b>Параметры:</b><br/>
+            Текущий вес: {user.current_weight} кг<br/>
+            Целевой вес: {user.target_weight} кг<br/>
+            Калории: {user.daily_calories} ккал/день<br/>
+            """
+            elements.append(Paragraph(user_info, styles['Normal']))
+            
+            # Генерируем и добавляем графики
+            # График веса
+            weight_chart = await self.generate_comprehensive_report(user.id)
+            if weight_chart:
+                img = Image(io.BytesIO(weight_chart), width=150*mm, height=100*mm)
+                elements.append(img)
+                elements.append(PageBreak())
+            
+            # Анализ прогресса
+            analysis = await self.analyze_user_progress(user.id)
+            
+            analysis_text = "<b>Анализ прогресса:</b><br/>"
+            if analysis['is_plateau']:
+                analysis_text += f"Обнаружено плато ({analysis['plateau_days']} дней)<br/>"
+            
+            if analysis.get('calorie_adjustment'):
+                adj = analysis['calorie_adjustment']
+                analysis_text += f"Рекомендуемая корректировка калорий: {adj:+d} ккал<br/>"
+            
+            if analysis.get('activity_recommendation'):
+                analysis_text += f"Рекомендация по активности: {analysis['activity_recommendation']}<br/>"
+            
+            elements.append(Paragraph(analysis_text, styles['Normal']))
+        
+        # Генерируем PDF
+        doc.build(elements)
+        
+        return pdf_path
     
     async def _plot_weight_with_prediction(self, ax, user_id: int):
         """График веса с трендом и прогнозом"""

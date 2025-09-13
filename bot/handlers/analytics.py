@@ -281,16 +281,284 @@ async def adapt_plan(callback: CallbackQuery):
         # Обычная адаптация
         result = await plateau_service.check_and_adapt(callback.from_user.id)
         
-        if result['success']:
+        if result['success'] and result.get('is_plateau'):
+            text = "✅ **План успешно адаптирован!**\n\n"
+            
+            if result.get('adaptations'):
+                adaptations = result['adaptations']
+                
+                if adaptations.get('calorie_adjustment'):
+                    adj = adaptations['calorie_adjustment']
+                    text += f"📊 Калории: {adj:+d} ккал\n"
+                
+                if adaptations.get('strategies'):
+                    text += "\n**Применены стратегии:**\n"
+                    for strategy in adaptations['strategies']:
+                        text += f"• {strategy}\n"
+                
+                if adaptations.get('activity_changes'):
+                    text += "\n**Рекомендации по активности:**\n"
+                    for key, value in adaptations['activity_changes'].items():
+                        text += f"• {value}\n"
+            
+            text += "\nИзменения вступят в силу со следующего дня.\n"
+            text += "Используйте /meal_plan для просмотра обновленного плана питания."
+            
+            await callback.message.answer(text, parse_mode="Markdown")
+        elif result['success']:
             await callback.message.answer(
-                "✅ **План успешно адаптирован!**\n\n"
-                "Изменения вступят в силу со следующего дня.\n"
-                "Используйте /meal_plan для просмотра обновленного плана питания.",
+                "✅ **Анализ завершен**\n\n"
+                "Ваш прогресс идет по плану!\n"
+                "Адаптация пока не требуется.\n\n"
+                "Продолжайте следовать текущему плану.",
                 parse_mode="Markdown"
             )
         else:
-            await callback.message.answer("❌ Адаптация не требуется или произошла ошибка")
+            await callback.message.answer("❌ Произошла ошибка при анализе")
 
+
+@router.callback_query(F.data == "start_diet_break")
+async def start_diet_break(callback: CallbackQuery):
+    """Начинает диетический перерыв"""
+    await callback.answer("Активирую диет-перерыв...")
+    
+    async with get_session() as session:
+        result = await session.execute(
+            select(User).where(User.telegram_id == callback.from_user.id)
+        )
+        user = result.scalar_one_or_none()
+        
+        if user:
+            # Увеличиваем калории до уровня поддержки
+            calories, protein, fats, carbs = calculate_calories_and_macros(
+                gender=user.gender,
+                age=user.age,
+                height=user.height,
+                weight=user.current_weight,
+                activity_level=user.activity_level,
+                goal=Goal.MAINTAIN  # Временно переключаем на поддержание
+            )
+            
+            # Сохраняем старые значения для возврата
+            old_calories = user.daily_calories
+            old_goal = user.goal
+            
+            user.daily_calories = calories
+            user.daily_protein = protein
+            user.daily_fats = fats
+            user.daily_carbs = carbs
+            
+            # Сохраняем информацию о диет-перерыве
+            user.reminder_settings = user.reminder_settings or {}
+            user.reminder_settings['diet_break'] = {
+                'started': datetime.now().isoformat(),
+                'old_calories': old_calories,
+                'old_goal': old_goal.value,
+                'duration': 14  # дней
+            }
+            
+            await session.commit()
+            
+            await callback.message.answer(
+                "✅ **Диет-перерыв активирован!**\n\n"
+                f"📊 Новые параметры на 14 дней:\n"
+                f"• Калории: {calories} ккал (поддержание)\n"
+                f"• Белки: {protein}г\n"
+                f"• Жиры: {fats}г\n"
+                f"• Углеводы: {carbs}г\n\n"
+                "**Рекомендации:**\n"
+                "• Продолжайте тренировки\n"
+                "• Фокус на восстановлении\n"
+                "• Не беспокойтесь о небольшом увеличении веса\n"
+                "• Это восстановление, а не откат!\n\n"
+                "Через 14 дней вернемся к работе над целью 💪",
+                parse_mode="Markdown"
+            )
+
+@router.callback_query(F.data == "continue_plan")
+async def continue_plan(callback: CallbackQuery):
+    """Продолжает текущий план без изменений"""
+    await callback.answer()
+    await callback.message.answer(
+        "👍 **План продолжается без изменений**\n\n"
+        "Вы решили продолжить без диет-перерыва.\n"
+        "Следите за самочувствием и при необходимости используйте /analytics",
+        parse_mode="Markdown"
+    )
+
+# ============ СКАЧИВАНИЕ PDF ПЛАНА ПРОРЫВА ============
+@router.callback_query(F.data == "download_breakthrough")
+async def download_breakthrough_pdf(callback: CallbackQuery):
+    """Скачивает PDF с планом прорыва плато"""
+    await callback.answer("Генерирую PDF...")
+    
+    from bot.services.pdf_generator import PDFGenerator
+    from aiogram.types import FSInputFile
+    
+    plateau_service = PlateauAdaptationService()
+    pdf_generator = PDFGenerator()
+    
+    async with get_session() as session:
+        result = await session.execute(
+            select(User).where(User.telegram_id == callback.from_user.id)
+        )
+        user = result.scalar_one_or_none()
+        
+        if user:
+            # Получаем план прорыва
+            breakthrough_plan = await plateau_service.generate_breakthrough_plan(callback.from_user.id)
+            
+            if breakthrough_plan['success']:
+                # Генерируем PDF
+                pdf_path = await pdf_generator.generate_breakthrough_pdf(user, breakthrough_plan['plan'])
+                
+                # Отправляем файл
+                pdf_file = FSInputFile(pdf_path, filename=f"breakthrough_plan_{datetime.now().strftime('%Y%m%d')}.pdf")
+                await callback.message.answer_document(
+                    pdf_file,
+                    caption="📄 **План прорыва плато на 7 дней**\n\n"
+                           "Следуйте этому плану для преодоления застоя.\n"
+                           "Включает:\n"
+                           "• Циклирование калорий\n"
+                           "• План тренировок\n"
+                           "• Важные рекомендации",
+                    parse_mode="Markdown"
+                )
+                
+                # Удаляем временный файл
+                os.remove(pdf_path)
+            else:
+                await callback.message.answer("❌ Ошибка при генерации PDF")
+
+# ============ НАЧАТЬ ПЛАН ПРОРЫВА ============
+@router.callback_query(F.data == "start_breakthrough")
+async def start_breakthrough(callback: CallbackQuery):
+    """Активирует план прорыва плато"""
+    await callback.answer("Активирую план прорыва...")
+    
+    async with get_session() as session:
+        result = await session.execute(
+            select(User).where(User.telegram_id == callback.from_user.id)
+        )
+        user = result.scalar_one_or_none()
+        
+        if user:
+            # Сохраняем информацию о начале плана прорыва
+            user.reminder_settings = user.reminder_settings or {}
+            user.reminder_settings['breakthrough_plan'] = {
+                'started': datetime.now().isoformat(),
+                'day': 1,
+                'total_days': 7
+            }
+            
+            await session.commit()
+            
+            await callback.message.answer(
+                "🚀 **План прорыва активирован!**\n\n"
+                "Следующие 7 дней будут интенсивными:\n"
+                "• Циклирование калорий\n"
+                "• Чередование нагрузок\n"
+                "• Фокус на результате\n\n"
+                "Я буду напоминать о плане каждый день.\n"
+                "Используйте /checkin для отслеживания прогресса.\n\n"
+                "Вместе прорвем это плато! 💪",
+                parse_mode="Markdown"
+            )
+
+# ============ НОВЫЙ ЧЕЛЛЕНДЖ ============
+@router.callback_query(F.data == "new_challenge")
+async def new_challenge(callback: CallbackQuery):
+    """Предлагает новый челлендж"""
+    await callback.answer()
+    
+    motivation_service = MotivationService()
+    challenge = await motivation_service._get_active_challenge(callback.from_user.id)
+    
+    if challenge:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Принять челлендж", callback_data="accept_challenge"),
+                InlineKeyboardButton(text="🔄 Другой", callback_data="new_challenge")
+            ],
+            [
+                InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_analytics")
+            ]
+        ])
+        
+        await callback.message.answer(
+            f"🎯 **Челлендж дня**\n\n"
+            f"**{challenge['name']}**\n"
+            f"Задание: {challenge['task']}\n"
+            f"Награда: {challenge['reward']}\n\n"
+            f"Принимаете вызов?",
+            reply_markup=keyboard,
+            parse_mode="Markdown"
+        )
+
+@router.callback_query(F.data == "accept_challenge")
+async def accept_challenge(callback: CallbackQuery):
+    """Принимает челлендж"""
+    await callback.answer("Челлендж принят!")
+    
+    await callback.message.answer(
+        "✅ **Челлендж принят!**\n\n"
+        "Отлично! Покажи на что способен!\n"
+        "Выполни задание и отметься в вечернем чек-ине.\n\n"
+        "Удачи! 🔥",
+        parse_mode="Markdown"
+    )
+
+# ============ МОИ ДОСТИЖЕНИЯ ============
+@router.callback_query(F.data == "my_achievements")
+async def my_achievements(callback: CallbackQuery):
+    """Показывает достижения пользователя"""
+    await callback.answer()
+    
+    motivation_service = MotivationService()
+    
+    async with get_session() as session:
+        result = await session.execute(
+            select(User).where(User.telegram_id == callback.from_user.id)
+        )
+        user = result.scalar_one_or_none()
+        
+        if user:
+            stats = await motivation_service._get_user_stats(user.id)
+            achievements = await motivation_service._check_achievements(user.id)
+            
+            text = "🏆 **Твои достижения**\n\n"
+            
+            # Основные достижения
+            if stats['total_checkins'] >= 1:
+                text += "✅ Первый чек-ин\n"
+            if stats['total_checkins'] >= 7:
+                text += "🔥 Неделя активности\n"
+            if stats['total_checkins'] >= 30:
+                text += "⭐ Месяц дисциплины\n"
+            if stats['total_checkins'] >= 90:
+                text += "👑 Легенда (90 дней)\n"
+            
+            # Достижения по весу
+            if stats.get('weight_change', 0) <= -5:
+                text += "🏅 Минус 5 кг\n"
+            if stats.get('weight_change', 0) <= -10:
+                text += "🏆 Минус 10 кг\n"
+            
+            # Серии
+            if stats.get('streak_days', 0) >= 7:
+                text += f"🔥 Серия {stats['streak_days']} дней\n"
+            
+            text += f"\n**Статистика:**\n"
+            text += f"• Всего чек-инов: {stats['total_checkins']}\n"
+            text += f"• Текущая серия: {stats.get('streak_days', 0)} дней\n"
+            
+            if stats.get('weight_change'):
+                text += f"• Изменение веса: {stats['weight_change']:.1f} кг\n"
+            
+            text += f"\n_Продолжай в том же духе!_ 💪"
+            
+            await callback.message.answer(text, parse_mode="Markdown")
+            
 # ============ РЕКОМЕНДАЦИИ ============
 @router.callback_query(F.data == "get_recommendations")
 async def get_recommendations(callback: CallbackQuery):
