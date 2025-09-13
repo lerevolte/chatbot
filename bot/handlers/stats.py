@@ -1,5 +1,5 @@
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile, BufferedInputFile
 from aiogram.filters import Command
 from datetime import datetime, timedelta
 from sqlalchemy import select, and_, func
@@ -65,9 +65,10 @@ async def show_weight_chart(callback: CallbackQuery):
             )
             return
         
+        photo_file = BufferedInputFile(chart_data, filename="weight_chart.png")
         # Отправляем график
         await callback.message.answer_photo(
-            photo=chart_data,
+            photo=photo_file,
             caption="📊 **График изменения веса за 30 дней**\n\n"
                     "🔵 Синяя линия - ваш вес\n"
                     "🔴 Красная линия - целевой вес\n"
@@ -95,8 +96,9 @@ async def show_activity_chart(callback: CallbackQuery):
             )
             return
         
+        photo_file = BufferedInputFile(chart_data, filename="activity_chart.png")
         await callback.message.answer_photo(
-            photo=chart_data,
+            photo=photo_file,
             caption="📊 **График активности за неделю**\n\n"
                     "📊 Столбцы - количество шагов\n"
                     "💧 Синие столбцы - потребление воды\n"
@@ -124,8 +126,9 @@ async def show_sleep_chart(callback: CallbackQuery):
             )
             return
         
+        photo_file = BufferedInputFile(chart_data, filename="sleep_chart.png")
         await callback.message.answer_photo(
-            photo=chart_data,
+            photo=photo_file,
             caption="💤 **График сна и настроения за 2 недели**\n\n"
                     "📊 Верхний график - часы сна\n"
                     "😊 Нижний график - настроение\n"
@@ -153,8 +156,9 @@ async def show_summary_chart(callback: CallbackQuery):
             )
             return
         
+        photo_file = BufferedInputFile(chart_data, filename="summary_chart.png")
         await callback.message.answer_photo(
-            photo=chart_data,
+            photo=photo_file,
             caption="📊 **Общая сводка прогресса**\n\n"
                     "Все ключевые метрики в одном месте:\n"
                     "• Динамика веса\n"

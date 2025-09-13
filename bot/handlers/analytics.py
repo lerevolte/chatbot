@@ -1,5 +1,5 @@
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile, BufferedInputFile
 from aiogram.filters import Command
 from datetime import datetime
 import logging
@@ -69,8 +69,9 @@ async def generate_full_report(callback: CallbackQuery):
             
             if report_data:
                 # Отправляем график как фото
+                photo_file = BufferedInputFile(report_data, filename="report.png")
                 await callback.message.answer_photo(
-                    photo=report_data,
+                    photo=photo_file,
                     caption="📊 **Ваш комплексный отчет готов!**\n\n"
                            "Отчет включает:\n"
                            "• График веса с прогнозом\n"
